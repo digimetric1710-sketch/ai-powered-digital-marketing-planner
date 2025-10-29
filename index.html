@@ -1,0 +1,544 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+ <head>
+   <meta charset="UTF-8" />
+   <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+   <title>Digimetric: AI Marketing Planner</title>
+   <script src="https://cdn.tailwindcss.com"></script>
+   <!-- Use Inter font family -->
+   <style>
+     body {
+       font-family: 'Inter', sans-serif;
+     }
+   </style>
+ <script type="importmap">
+{
+ "imports": {
+   "react": "https://aistudiocdn.com/react@^19.2.0",
+   "react-dom/client": "https://aistudiocdn.com/react-dom@^19.2.0/client",
+   "@heroicons/react/24/outline": "https://aistudiocdn.com/@heroicons/react@^2.2.0/24/outline/index.js",
+   "@google/genai": "https://aistudiocdn.com/@google/genai@^1.27.0",
+   "marked": "https://aistudiocdn.com/marked@^16.4.1"
+ }
+}
+</script>
+</head>
+ <body class="bg-black">
+   <div id="root"></div>
+   <script type="module">
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import ReactDOM from 'react-dom/client';
+import { GoogleGenAI } from "@google/genai";
+import { marked } from 'marked';
+import { SparklesIcon, DocumentDuplicateIcon, ArrowPathIcon, ArrowLeftOnRectangleIcon, CheckIcon } from '@heroicons/react/24/outline';
+
+
+// --- From constants.ts ---
+const LANGUAGES = ['Burmese', 'English', 'Thai', 'Chinese'];
+const PLAN_DURATIONS = ['One Week', 'One Month'];
+
+
+// --- From services/geminiService.ts ---
+const systemInstruction = `You are an expert digital marketing strategist named 'Digimetric AI'. Your task is to create a detailed, actionable, and professional digital marketing plan based on the user's business information. The plan should be structured, clear, and easy to follow. Use Markdown for formatting.`;
+
+
+const theorySystemInstruction = `You are an expert marketing academic. Your task is to analyze a given marketing plan and explain the core marketing strategies, models, or theories (e.g., AIDA, STP, 4Ps, Blue Ocean Strategy, Content Marketing Funnel) that underpin the recommendations. Provide a structured explanation using clear headings and emojis, ensuring the entire output is in the specified language.`;
+
+
+const buildUserPrompt = (formData, language, duration) => {
+ return `
+   User's Business Information:
+   - Business Name: ${formData.businessName}
+   - Business Type: ${formData.businessType}
+   - Products/Services: ${formData.productsServices}
+   - Target Customers: ${formData.targetCustomers}
+   - Target Location: ${formData.targetLocation}
+   - Current Sales Status: ${formData.salesStatus}
+   - Current Challenges: ${formData.challenges}
+   - Current Sales Channels: ${formData.salesChannels}
+   - Current Sales Platforms: ${formData.salesPlatforms}
+   - Desired Marketing Goal: ${formData.marketingGoal}
+   - Estimated Marketing Budget: ${formData.marketingBudget}
+
+
+   Task:
+   Generate a ${duration} digital marketing plan for "${formData.businessName}".
+  
+   ***ABSOLUTELY CRITICAL: The entire output, including all headings, content, and every single word, MUST be 100% in ${language}. Do NOT use any foreign language words (English, Thai, Chinese, etc.), including marketing terminology. Translate every concept into ${language}. Only proper nouns provided by the user may remain untranslated.***
+  
+   ***Use relevant and descriptive emojis (e.g., 🚀, 🎯, 💡, 💰, ✅) generously throughout the plan to make it visually engaging and clear.***
+
+
+   The plan MUST include the following sections, formatted with Markdown:
+   1.  **Executive Summary:** A brief overview of the strategy.
+   2.  **Objectives & Key Performance Indicators (KPIs):** Specific, measurable goals for the ${duration} period.
+   3.  **Target Audience Deep Dive:** A more detailed persona based on the user's input.
+   4.  **Channel Strategy:** Which platforms to use and why (e.g., SEO, Content Marketing, Social Media (specify platforms), Email Marketing, Paid Ads). Be specific and justify your choices.
+   5.  **Key Messaging & Content Pillars:** What to say and what core topics to focus on.
+   6.  **${duration} Action Plan:** A breakdown of tasks for the period. For a one-week plan, provide a day-by-day schedule. For a one-month plan, provide a week-by-week schedule.
+   7.  **Budget Allocation Suggestion:** A suggested breakdown of the estimated budget across the recommended channels.
+   8.  **Measurement & Reporting:** How to track success and measure KPIs.
+
+
+   Begin the response with a title: "# Your ${duration} Digital Marketing Plan for ${formData.businessName}".
+ `;
+};
+
+
+// Generates the primary marketing plan
+const generateMarketingPlan = async (apiKey, formData, language, duration) => {
+ const ai = new GoogleGenAI({ apiKey });
+ try {
+   const userPrompt = buildUserPrompt(formData, language, duration);
+   const response = await ai.models.generateContent({
+     model: 'gemini-2.5-pro',
+     contents: userPrompt,
+     config: {
+       systemInstruction: systemInstruction,
+     },
+   });
+   return response.text;
+ } catch (error) {
+   console.error("Error generating marketing plan:", error);
+   throw new Error("Failed to communicate with the AI model. Check your API Key or try again.");
+ }
+};
+
+
+// Generates the underlying strategy and theory
+const generateTheory = async (apiKey, marketingPlan, language) => {
+ const ai = new GoogleGenAI({ apiKey });
+ try {
+   const userPrompt = `Analyze the following marketing plan and explain the foundational marketing strategies and theories used to structure it. The entire explanation MUST be 100% in ${language}. Do NOT include any foreign language words (English, Thai, Chinese, etc.); translate all marketing terminology fully.\n\nMarketing Plan:\n${marketingPlan}`;
+  
+   const response = await ai.models.generateContent({
+     model: 'gemini-2.5-pro',
+     contents: userPrompt,
+     config: {
+       systemInstruction: theorySystemInstruction,
+     },
+   });
+   return response.text;
+ } catch (error) {
+   console.error("Error generating marketing theory:", error);
+   throw new Error("Failed to generate strategy theory. Please try again.");
+ }
+};
+
+
+
+
+// --- From components/FormInput.tsx ---
+const FormInput = ({ label, name, value, onChange, placeholder, isTextArea = false }) => {
+ const commonProps = {
+   name,
+   value,
+   onChange,
+   placeholder,
+   className: "w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-4 py-2.5 mt-2 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all duration-300 ease-in-out placeholder-gray-500"
+ };
+
+
+ return (
+   React.createElement('div', { className: "space-y-1" },
+     React.createElement('label', { htmlFor: name, className: "block text-sm font-medium text-gray-400" }, label),
+     isTextArea ? (
+       React.createElement('textarea', { ...commonProps, rows: 3 })
+     ) : (
+       React.createElement('input', { type: "text", ...commonProps })
+     )
+   )
+ );
+};
+
+
+
+
+// --- From components/LanguageSelector.tsx ---
+const LanguageSelector = ({ selectedLanguage, onSelectLanguage, languages }) => {
+ return (
+   React.createElement('div', null,
+     React.createElement('h3', { className: "text-lg font-semibold text-white mb-4 text-center sm:text-left" }, "Choose Output Language"),
+     React.createElement('div', { className: "grid grid-cols-2 sm:grid-cols-4 gap-3" },
+       languages.map((lang) => (
+         React.createElement('button', {
+           key: lang,
+           onClick: () => onSelectLanguage(lang),
+           className: `w-full py-3 px-4 rounded-xl text-center font-medium transition-all duration-300 ease-in-out
+             ${selectedLanguage === lang
+               ? 'bg-cyan-500 text-black shadow-lg shadow-cyan-500/30'
+               : 'bg-gray-700 text-gray-300 hover:bg-gray-600 hover:text-white'
+             }`
+         }, lang)
+       ))
+     )
+   )
+ );
+};
+
+
+// --- From components/ResultDisplay.tsx ---
+const ResultDisplay = ({ plan }) => {
+ const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+   // Using execCommand for better compatibility in sandboxed environments
+   const tempElement = document.createElement('textarea');
+   tempElement.value = plan;
+   document.body.appendChild(tempElement);
+   tempElement.select();
+   try {
+       document.execCommand('copy');
+       setCopied(true);
+   } catch (err) {
+       console.error('Failed to copy text: ', err);
+   }
+   document.body.removeChild(tempElement);
+ };
+  // Removed handleExportSheet function and copiedSheet state/effect as requested.
+
+
+ useEffect(() => {
+   if (copied) {
+     const timer = setTimeout(() => setCopied(false), 2000);
+     return () => clearTimeout(timer);
+   }
+ }, [copied]);
+  const getSanitizedHtml = (markdown) => {
+   // Marked.js options for safer rendering
+   marked.setOptions({
+       gfm: true,
+       breaks: true,
+       sanitize: true, // Basic sanitization
+   });
+   const rawHtml = marked.parse(markdown);
+   return { __html: rawHtml };
+ };
+
+
+ return (
+   React.createElement('div', { className: "bg-gray-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-2xl border border-gray-800 relative shadow-xl shadow-gray-900/50" },
+     // Button Container (Absolute Positioning)
+     // Only the Copy Markdown button remains
+     React.createElement('div', { className: "absolute top-4 right-4 flex space-x-2 z-20" },
+       // 1. Copy Markdown Button
+       React.createElement('button', {
+         onClick: handleCopy,
+         className: "bg-gray-700 hover:bg-gray-600 text-gray-300 p-2 rounded-lg transition-colors flex items-center gap-1 text-sm sm:text-base",
+         'aria-label': "Copy plan to clipboard"
+       },
+         copied ?
+         React.createElement(React.Fragment, null,
+             React.createElement(CheckIcon, { className: "h-5 w-5 text-green-400" }),
+             React.createElement('span', { className: "text-sm text-green-400" }, "Copied!")
+         ) :
+         React.createElement(React.Fragment, null,
+             React.createElement(DocumentDuplicateIcon, { className: "h-5 w-5" }),
+             React.createElement('span', { className: "hidden sm:inline" }, "Copy Markdown")
+         )
+       )
+     ),
+     React.createElement('div', {
+       className: "prose prose-invert prose-headings:text-cyan-400 prose-a:text-cyan-400 hover:prose-a:text-cyan-300 prose-strong:text-white prose-li:text-gray-300 prose-p:text-gray-300 max-w-none text-gray-300 pt-10", // Added pt-10 to offset button container
+       dangerouslySetInnerHTML: getSanitizedHtml(plan)
+     })
+   )
+ );
+};
+
+
+
+
+// --- From App.tsx ---
+const App = () => {
+ // State for API Key and authentication
+ const [isLoggedIn, setIsLoggedIn] = useState(false);
+ const [apiKey, setApiKey] = useState('');
+  // State for form data
+ const [formData, setFormData] = useState({
+   businessName: '',
+   businessType: '',
+   productsServices: '',
+   targetCustomers: '',
+   targetLocation: '',
+   salesStatus: '',
+   challenges: '',
+   salesChannels: '',
+   salesPlatforms: '',
+   marketingGoal: '',
+   marketingBudget: '',
+ });
+  // State for plan generation
+ const [selectedLanguage, setSelectedLanguage] = useState('English');
+ const [generatedPlan, setGeneratedPlan] = useState(null);
+ const [isLoading, setIsLoading] = useState(false);
+ const [error, setError] = useState(null);
+
+
+ // State for theory generation (NEW)
+ const [generatedTheory, setGeneratedTheory] = useState(null);
+ const [isTheoryLoading, setIsTheoryLoading] = useState(false);
+ const [theoryError, setTheoryError] = useState(null);
+
+
+ const resultsRef = useRef(null);
+
+
+ const handleInputChange = (e) => {
+   const { name, value } = e.target;
+   setFormData((prev) => ({ ...prev, [name]: value }));
+ };
+
+
+ const handleGeneratePlan = useCallback(async (duration) => {
+   setIsLoading(true);
+   setError(null);
+   setGeneratedPlan(null);
+   setGeneratedTheory(null); // Clear theory on new plan generation
+  
+   // Crucial check: API Key must be present
+   if (!apiKey) {
+     setError('API Key is missing. Please log in first.');
+     setIsLoading(false);
+     return;
+   }
+
+
+   if (!formData.businessName || !formData.productsServices || !formData.marketingGoal) {
+     setError('Please fill out at least Business Name, Products/Services, and Desired Marketing Goal.');
+     setIsLoading(false);
+     return;
+   }
+  
+   // Scroll to results area after a brief delay to allow loading indicator to render
+   setTimeout(() => {
+       resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+   }, 100);
+
+
+   try {
+     // Pass the apiKey to the service function
+     const plan = await generateMarketingPlan(apiKey, formData, selectedLanguage, duration);
+     setGeneratedPlan(plan);
+   } catch (err) {
+     // Catch specific error types if possible, otherwise use generic message
+     setError('Failed to generate marketing plan. Please check your API key, ensure the form is complete, and try again.');
+     console.error(err);
+   } finally {
+     setIsLoading(false);
+   }
+ }, [formData, selectedLanguage, apiKey]);
+  // Handler for generating Strategy & Theory (NEW)
+ const handleGenerateTheory = useCallback(async () => {
+   setIsTheoryLoading(true);
+   setTheoryError(null);
+   setGeneratedTheory(null);
+
+
+   if (!generatedPlan) {
+     setTheoryError("Please generate the marketing plan first.");
+     setIsTheoryLoading(false);
+     return;
+   }
+  
+   // Scroll to results area
+   setTimeout(() => {
+       resultsRef.current?.scrollIntoView({ behavior: 'smooth' });
+   }, 100);
+
+
+   try {
+     const theory = await generateTheory(apiKey, generatedPlan, selectedLanguage);
+     setGeneratedTheory(theory);
+   } catch (err) {
+     setTheoryError('Failed to generate strategy and theory. Please try again.');
+     console.error(err);
+   } finally {
+     setIsTheoryLoading(false);
+   }
+ }, [apiKey, generatedPlan, selectedLanguage]);
+
+
+
+
+ const handleLogin = (e) => {
+   e.preventDefault();
+   if (apiKey.trim() !== '') {
+     setIsLoggedIn(true);
+   }
+ };
+
+
+ const handleLogout = () => {
+   setIsLoggedIn(false);
+   setApiKey('');
+   setGeneratedPlan(null); // Clear previous plan
+   setGeneratedTheory(null); // Clear previous theory
+ };
+  const isFormIncomplete = !formData.businessName || !formData.productsServices || !formData.marketingGoal;
+
+
+ if (!isLoggedIn) {
+   return (
+     React.createElement('div', { className: "min-h-screen bg-black text-gray-200 font-sans flex items-center justify-center p-4" },
+       React.createElement('div', { className: "max-w-md w-full bg-gray-900/50 backdrop-blur-sm border border-gray-800 rounded-2xl p-8 shadow-2xl shadow-cyan-500/10" },
+         React.createElement('div', { className: "text-center space-y-4 mb-8" },
+           React.createElement('h1', { className: "text-4xl font-bold text-white" }, "Digimetric"),
+           React.createElement('p', { className: "text-xl font-light text-cyan-400" }, "AI-Powered Digital Marketing Planner"),
+           React.createElement('p', { className: "text-gray-400 pt-2" }, "Please enter your Gemini API Key to use the application.")
+         ),
+         React.createElement('form', { onSubmit: handleLogin, className: "space-y-6" },
+           React.createElement('div', null,
+             React.createElement('label', { htmlFor: "apiKey", className: "block text-sm font-medium text-gray-400 mb-2" }, "Gemini API Key"),
+             React.createElement('input', {
+               id: "apiKey", name: "apiKey", type: "password", autoComplete: "off", required: true,
+               value: apiKey, onChange: (e) => setApiKey(e.target.value),
+               className: "w-full bg-gray-800 border border-gray-700 text-white rounded-lg px-4 py-2.5 focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 outline-none transition-all duration-300 ease-in-out placeholder-gray-500",
+               placeholder: "Enter API Key"
+             })
+           ),
+           React.createElement('button', {
+             type: "submit", disabled: !apiKey.trim(),
+             className: "w-full bg-cyan-500 text-black font-bold py-3 px-8 rounded-lg shadow-lg shadow-cyan-500/20 transition-all duration-300 ease-in-out hover:bg-cyan-400 hover:shadow-cyan-400/40 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed disabled:shadow-none"
+           }, "Log in")
+         )
+       )
+     )
+   );
+ }
+
+
+ return (
+   React.createElement('div', { className: "min-h-screen bg-black text-gray-200 font-sans p-4 sm:p-6 md:p-8" },
+     React.createElement('div', { className: "max-w-5xl mx-auto relative" },
+       React.createElement('button', {
+         onClick: handleLogout,
+         className: "absolute top-0 right-0 flex items-center gap-2 bg-gray-900/50 backdrop-blur-sm border border-gray-800 text-gray-300 font-medium py-2 px-4 rounded-lg transition-all duration-300 ease-in-out hover:bg-gray-800 hover:text-white hover:border-gray-700 z-10",
+         'aria-label': "Logout"
+       },
+         React.createElement(ArrowLeftOnRectangleIcon, { className: "h-5 w-5" }),
+         React.createElement('span', { className: "hidden sm:inline" }, "Logout")
+       ),
+       React.createElement('header', { className: "text-center mb-10 pt-16" },
+         React.createElement('h1', { className: "text-4xl sm:text-5xl font-extrabold text-white mb-2 tracking-tight" }, "Digimetric"),
+         React.createElement('p', { className: "text-xl sm:text-2xl font-light text-cyan-400" }, "AI-Powered Digital Marketing Planner")
+       ),
+       React.createElement('main', { className: "space-y-8" },
+         React.createElement('div', { className: "bg-gray-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-2xl border border-gray-800 shadow-xl shadow-gray-900/50" },
+           React.createElement('h2', { className: "text-2xl font-semibold text-white mb-6 border-b border-gray-700 pb-3" }, "Business Profile"),
+           React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-2 gap-6" },
+             React.createElement(FormInput, { label: "1. Name of Your Business*", name: "businessName", value: formData.businessName, onChange: handleInputChange, placeholder: "e.g., Stellar Coffee" }),
+             React.createElement(FormInput, { label: "2. Type of Business", name: "businessType", value: formData.businessType, onChange: handleInputChange, placeholder: "e.g., B2C e-commerce, Local service business" })
+           ),
+           React.createElement('div', { className: "mt-6" },
+             React.createElement(FormInput, { label: "3. What is your products/services?*", name: "productsServices", value: formData.productsServices, onChange: handleInputChange, placeholder: "e.g., Specialty roasted coffee beans subscription, Custom website design services", isTextArea: true })
+           ),
+           React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-2 gap-6 mt-6" },
+             React.createElement(FormInput, { label: "4. Target Customers (Persona)", name: "targetCustomers", value: formData.targetCustomers, onChange: handleInputChange, placeholder: "e.g., Young professionals (25-35), Small business owners in tech" }),
+             React.createElement(FormInput, { label: "5. Target Location", name: "targetLocation", value: formData.targetLocation, onChange: handleInputChange, placeholder: "e.g., Entire US, Bangkok metro area" }),
+             React.createElement(FormInput, { label: "6. Current Sales Status", name: "salesStatus", value: formData.salesStatus, onChange: handleInputChange, placeholder: "e.g., Just launched, Established with steady sales" }),
+             React.createElement(FormInput, { label: "7. Current Challenges", name: "challenges", value: formData.challenges, onChange: handleInputChange, placeholder: "e.g., Low brand awareness, high customer churn" }),
+             React.createElement(FormInput, { label: "8. Current Sales Channels", name: "salesChannels", value: formData.salesChannels, onChange: handleInputChange, placeholder: "e.g., Retail store, Online via Shopify, B2B sales" }),
+             React.createElement(FormInput, { label: "9. Current Sales Platforms", name: "salesPlatforms", value: formData.salesPlatforms, onChange: handleInputChange, placeholder: "e.g., Instagram, Facebook Ads, Google SEO" })
+           ),
+           React.createElement('div', { className: "grid grid-cols-1 md:grid-cols-2 gap-6 mt-6 pt-6 border-t border-gray-700" },
+               React.createElement(FormInput, { label: "10. Desired Marketing Goal (Specific)*", name: "marketingGoal", value: formData.marketingGoal, onChange: handleInputChange, placeholder: "e.g., Increase website traffic by 30% and leads by 15% in the next month" }),
+               React.createElement(FormInput, { label: "11. Estimated Marketing Budget (Monthly)", name: "marketingBudget", value: formData.marketingBudget, onChange: handleInputChange, placeholder: "e.g., $5,000 USD or 50,000 THB" })
+           ),
+         ),
+         React.createElement('div', { className: "bg-gray-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-2xl border border-gray-800 shadow-xl shadow-gray-900/50" },
+           React.createElement(LanguageSelector, { selectedLanguage: selectedLanguage, onSelectLanguage: setSelectedLanguage, languages: LANGUAGES })
+         ),
+         React.createElement('div', { className: "text-center pt-4" },
+           React.createElement('h2', { className: "text-3xl font-bold text-white mb-6" }, "Generate Your Plan"),
+           React.createElement('div', { className: "flex flex-col sm:flex-row justify-center items-center gap-4" },
+             PLAN_DURATIONS.map(duration => (
+               React.createElement('button', {
+                 key: duration,
+                 onClick: () => handleGeneratePlan(duration),
+                 disabled: isLoading || isFormIncomplete,
+                 className: "w-full sm:w-auto flex items-center justify-center gap-2 bg-cyan-500 text-black font-bold py-3 px-8 rounded-xl shadow-lg shadow-cyan-500/30 transition-all duration-300 ease-in-out hover:bg-cyan-400 hover:shadow-cyan-400/50 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed disabled:shadow-none"
+               },
+                 React.createElement(SparklesIcon, { className: "h-5 w-5" }),
+                 `Generate ${duration} Plan`
+               )
+             ))
+           ),
+           isFormIncomplete && React.createElement('p', { className: "text-sm text-yellow-400 mt-4" }, "*Required fields: Business Name, Products/Services, and Desired Marketing Goal must be filled in to generate a plan.")
+         )
+       ),
+      
+       // Results Area
+       React.createElement('div', { ref: resultsRef, className: "mt-12" },
+         // Plan Generation Loading/Error
+         isLoading && (
+           React.createElement('div', { className: "flex flex-col items-center justify-center text-center p-12 bg-gray-900/50 rounded-2xl border border-gray-800 shadow-xl shadow-gray-900/50" },
+             React.createElement(ArrowPathIcon, { className: "h-12 w-12 text-cyan-400 animate-spin mb-4" }),
+             React.createElement('h3', { className: "text-2xl font-semibold text-white" }, "Generating Your Custom Strategy..."),
+             React.createElement('p', { className: "text-gray-400 mt-2" }, "The AI is crafting a detailed, action-oriented plan. This can take up to 30 seconds.")
+           )
+         ),
+         error && React.createElement('div', { className: "text-center p-4 bg-red-900/50 border border-red-700 text-red-300 rounded-xl mt-4" }, error),
+        
+         // Marketing Plan Display
+         generatedPlan && React.createElement(ResultDisplay, { plan: generatedPlan }),
+        
+         // --- Strategy & Theory Section (NEW) ---
+         generatedPlan && React.createElement('div', { className: "text-center pt-8" },
+           React.createElement('button', {
+             onClick: handleGenerateTheory,
+             disabled: isTheoryLoading,
+             className: "w-full sm:w-auto flex items-center justify-center gap-2 bg-purple-600 text-white font-bold py-3 px-8 rounded-xl shadow-lg shadow-purple-600/30 transition-all duration-300 ease-in-out hover:bg-purple-500 hover:shadow-purple-500/50 disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed disabled:shadow-none"
+           },
+             isTheoryLoading ? (
+               React.createElement(ArrowPathIcon, { className: "h-5 w-5 animate-spin" })
+             ) : (
+               React.createElement(SparklesIcon, { className: "h-5 w-5" })
+             ),
+             "Generate Strategy & Theory"
+           )
+         ),
+
+
+         // Theory Loading/Error
+         isTheoryLoading && !generatedTheory && (
+           React.createElement('div', { className: "flex flex-col items-center justify-center text-center p-12 mt-8 bg-gray-900/50 rounded-2xl border border-gray-800 shadow-xl shadow-gray-900/50" },
+             React.createElement(ArrowPathIcon, { className: "h-12 w-12 text-purple-400 animate-spin mb-4" }),
+             React.createElement('h3', { className: "text-2xl font-semibold text-white" }, "Analyzing Strategy..."),
+             React.createElement('p', { className: "text-gray-400 mt-2" }, "The AI is analyzing the plan's academic foundations.")
+           )
+         ),
+         theoryError && React.createElement('div', { className: "text-center p-4 bg-red-900/50 border border-red-700 text-red-300 rounded-xl mt-4" }, theoryError),
+
+
+         // Theory Display
+         generatedTheory && React.createElement('div', { className: "mt-8" },
+           React.createElement('h2', { className: "text-3xl font-bold text-white mb-6 border-b border-gray-700 pb-3" }, "Underlying Strategy & Theory"),
+           // Reusing ResultDisplay for theory output
+           React.createElement(ResultDisplay, { plan: generatedTheory })
+         )
+       )
+     )
+   )
+ );
+};
+
+
+
+
+// --- From index.tsx ---
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+ throw new Error("Could not find root element to mount to");
+}
+
+
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+ React.createElement(React.StrictMode, null, React.createElement(App))
+);
+
+
+   </script>
+ </body>
+</html>
